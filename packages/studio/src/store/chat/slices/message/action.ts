@@ -319,7 +319,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       }
     }
 
-    const instruction = activeBookId ? trimmed : `/new ${trimmed}`;
+    const instruction = trimmed;
     const streamTs = Date.now() + 1;
 
     set((state) => ({

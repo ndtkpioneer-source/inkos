@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveActiveBookId, isStandaloneBookCreateRoute } from "./App";
+import { deriveActiveBookId, isBookCreateChatRoute } from "./App";
 
 describe("deriveActiveBookId", () => {
   it("returns the current book across book-centered routes", () => {
@@ -17,9 +17,9 @@ describe("deriveActiveBookId", () => {
   });
 });
 
-describe("isStandaloneBookCreateRoute", () => {
-  it("keeps the new-book route on the dedicated creation page instead of book chat", () => {
-    expect(isStandaloneBookCreateRoute({ page: "book-create" })).toBe(true);
-    expect(isStandaloneBookCreateRoute({ page: "book", bookId: "alpha" })).toBe(false);
+describe("isBookCreateChatRoute", () => {
+  it("routes new-book creation through chat instead of the standalone form page", () => {
+    expect(isBookCreateChatRoute({ page: "book-create" })).toBe(true);
+    expect(isBookCreateChatRoute({ page: "book", bookId: "alpha" })).toBe(false);
   });
 });
