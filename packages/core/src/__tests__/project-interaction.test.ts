@@ -25,7 +25,7 @@ describe("project interaction control", () => {
     // tmpdir cleanup omitted
   });
 
-  it("routes continue through the persisted active book", async () => {
+  it("routes explicit write command through the persisted active book", async () => {
     await persistProjectSession(projectRoot, {
       ...createProjectSession(projectRoot),
       activeBookId: "harbor",
@@ -44,7 +44,7 @@ describe("project interaction control", () => {
 
     const result = await processProjectInteractionInput({
       projectRoot,
-      input: "continue",
+      input: "/write",
       tools,
     });
 
@@ -57,7 +57,7 @@ describe("project interaction control", () => {
     ]);
   });
 
-  it("persists mode switches in the project session", async () => {
+  it("persists explicit mode switches in the project session", async () => {
     await persistProjectSession(projectRoot, {
       ...createProjectSession(projectRoot),
       activeBookId: "harbor",
@@ -65,7 +65,7 @@ describe("project interaction control", () => {
 
     const result = await processProjectInteractionInput({
       projectRoot,
-      input: "切换到全自动",
+      input: "/mode auto",
       tools: {
         listBooks: vi.fn(async () => ["harbor"]),
         writeNextChapter: vi.fn(async () => ({ ok: true })),
@@ -93,7 +93,7 @@ describe("project interaction control", () => {
 
     await expect(processProjectInteractionInput({
       projectRoot,
-      input: "continue",
+      input: "/write",
       tools: {
         listBooks: vi.fn(async () => ["harbor"]),
         writeNextChapter: vi.fn(async () => {
@@ -184,7 +184,7 @@ describe("project interaction control", () => {
     expect(persisted.activeBookId).toBe("night-harbor");
   });
 
-  it("persists a creation draft across freeform ideation turns", async () => {
+  it("persists a creation draft across explicit slash-command ideation turns", async () => {
     const ideationRoot = await mkdtemp(join(tmpdir(), "inkos-project-ideation-"));
     await writeFile(join(ideationRoot, "inkos.json"), JSON.stringify({ language: "zh" }), "utf-8");
     await persistProjectSession(ideationRoot, createProjectSession(ideationRoot));
@@ -220,7 +220,7 @@ describe("project interaction control", () => {
     try {
       const result = await processProjectInteractionInput({
         projectRoot: ideationRoot,
-        input: "我想写个港风商战悬疑，主角从灰产洗白。",
+        input: "/new 我想写个港风商战悬疑，主角从灰产洗白。",
         tools,
       });
 

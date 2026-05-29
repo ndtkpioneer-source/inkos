@@ -168,13 +168,11 @@ export async function processTuiAgentInput(params: {
 
 function isWriteNextInstruction(instruction: string): boolean {
   const trimmed = instruction.trim();
-  return /^(continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i.test(trimmed)
-    || /^写第\s*\d+\s*章$/i.test(trimmed)
-    || /(继续写|写下一章|下一章|再来一章|write\s+next)/i.test(trimmed);
+  return /^(\/write|continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i.test(trimmed);
 }
 
 function isCreateBookInstruction(instruction: string): boolean {
-  return /(建书|新建书|创建|开书|create\s+(?:a\s+)?book)/i.test(instruction)
+  return /^\/new\s+/i.test(instruction)
     && /(?:标题|书名|title)\s*[《"“]/i.test(instruction);
 }
 

@@ -513,14 +513,14 @@ export function buildStyledHelpSections(locale: TuiLocale = resolveTuiLocale()):
 function buildHelpFooter(locale: TuiLocale): { readonly title: string; readonly examples: readonly string[] } {
   if (locale === "en") {
     return {
-      title: "Natural language also works:",
-      examples: ['"continue writing" "write next chapter" "pause" "rename Lin Jin to Zhang San"'],
+      title: "Use slash commands for actions:",
+      examples: ['"/write" "/rewrite 3" "/pause" "/rename Lin Jin => Zhang San"'],
     };
   }
 
   return {
-    title: "自然语言同样可用：",
-    examples: ['"继续写" "写下一章" "暂停" "把林烬改成张三"'],
+    title: "执行动作请使用 slash 命令：",
+    examples: ['"/write" "/rewrite 3" "/pause" "/rename 林烬 => 张三"'],
   };
 }
 
