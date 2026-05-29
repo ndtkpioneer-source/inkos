@@ -4,7 +4,6 @@ import type { HashRoute } from "./hooks/use-hash-route";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { ChatPage } from "./pages/ChatPage";
-import { PlayPage } from "./pages/PlayPage";
 import { BookDetail } from "./pages/BookDetail";
 import { ChapterReader } from "./pages/ChapterReader";
 import { Analytics } from "./pages/Analytics";
@@ -68,7 +67,6 @@ export function App() {
   const nav = {
     toDashboard: () => setRoute({ page: "dashboard" }),
     toChat: () => setRoute({ page: "chat" }),
-    toPlay: () => setRoute({ page: "play" }),
     toBook: (bookId: string) => setRoute({ page: "book", bookId }),
     toBookSettings: (bookId: string) => setRoute({ page: "book-settings", bookId }),
     toBookCreate: () => setRoute({ page: "book-create" }),
@@ -194,11 +192,6 @@ export function App() {
                 t={t}
                 sse={sse}
               />
-            </div>
-          )}
-          {route.page === "play" && (
-            <div className="absolute inset-0 flex min-w-0">
-              <PlayPage />
             </div>
           )}
           {route.page === "book" && (

@@ -106,7 +106,6 @@ export interface PlayToolDetails {
   readonly runId?: string;
   readonly sceneText?: string;
   readonly suggestedActions?: readonly string[];
-  readonly playUrl?: string;
 }
 
 export interface ProposedActionDetails {
@@ -188,7 +187,6 @@ export function getPlayToolDetails(exec: ToolExecution): PlayToolDetails | null 
     runId: stringField(record, "runId"),
     sceneText: stringField(record, "sceneText"),
     suggestedActions: suggested,
-    playUrl: stringField(record, "playUrl"),
   };
 }
 
@@ -260,13 +258,8 @@ function PlayResultPreview({ exec }: { exec: ToolExecution }) {
   if (!details?.sceneText) return null;
   return (
     <div className="mx-3 mb-3 mt-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-semibold text-primary">
-          {details.kind === "play_world_started" ? "互动世界已启动" : "互动世界已推进"}
-        </div>
-        <a href={details.playUrl ?? "#/play"} className="text-xs text-muted-foreground underline underline-offset-2">
-          查看状态
-        </a>
+      <div className="mb-2 text-xs font-semibold text-primary">
+        {details.kind === "play_world_started" ? "互动世界已启动" : "互动世界已推进"}
       </div>
       <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">{details.sceneText}</div>
       {details.suggestedActions && details.suggestedActions.length > 0 && (

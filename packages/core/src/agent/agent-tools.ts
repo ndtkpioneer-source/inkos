@@ -668,7 +668,6 @@ export function createPlayStartTool(
           premise: world.premise,
           sceneText,
           suggestedActions,
-          playUrl: "#/play",
         },
       );
     },
@@ -766,7 +765,6 @@ export function createPlayStepTool(
           mutation: step.mutation,
           currentState,
           graph,
-          playUrl: "#/play",
         },
       );
     },

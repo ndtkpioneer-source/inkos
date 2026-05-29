@@ -20,6 +20,7 @@ import {
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import { ToolExecutionSteps, type ProposedActionDetails } from "../components/chat/ToolExecutionSteps";
+import { PlayHud } from "../components/chat/PlayHud";
 import {
   Loader2,
   BotMessageSquare,
@@ -328,7 +329,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   })();
 
   return (
-    <div className="flex flex-col h-full flex-1 min-w-0">
+    <div className="flex flex-col h-full flex-1 min-w-0 relative">
       {/* Message scroll area */}
       <div
         ref={scrollRef}
@@ -507,6 +508,15 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
             </div>
         </div>
       </div>
+
+      {currentSessionKind === "play" && activeSessionId && (
+        <PlayHud
+          sessionId={activeSessionId}
+          isStreaming={loading}
+          isZh={isZh}
+          sessionTitle={activeSession?.title ?? null}
+        />
+      )}
     </div>
   );
 }

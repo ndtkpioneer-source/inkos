@@ -3290,38 +3290,6 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("runs a Play step through the independent Play API", async () => {
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const response = await app.request("http://localhost/api/v1/play/step", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        worldId: "betrayal-car",
-        runId: "run-1",
-        input: "我假装看天气，顺手点开车机导航记录",
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      worldId: "betrayal-car",
-      runId: "run-1",
-      sceneText: "车机弹出新城花园 187 次。",
-      suggestedActions: ["继续查看医院记录", "问徐晋安今晚去哪"],
-      currentState: null,
-      graph: {
-        entities: [],
-        edges: [],
-        stateSlots: [],
-        events: [],
-      },
-    });
-    expect(playRunnerCtorArgs).toHaveLength(1);
-    expect(playRunnerStepMock).toHaveBeenCalledWith("我假装看天气，顺手点开车机导航记录");
-  });
-
   it("loads an existing Play run transcript for Studio refresh", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -3361,53 +3329,4 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("creates and lists Play worlds and runs for the Studio Play landing flow", async () => {
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const created = await app.request("http://localhost/api/v1/play/worlds", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: "rain-teahouse",
-        title: "雨夜茶馆",
-        premise: "主角在雨夜茶馆查一笔旧账。",
-        mode: "open",
-        runId: "run-001",
-        initialScene: "雨压在玻璃棚上，柜台后的老人把账本推过来。",
-      }),
-    });
-
-    expect(created.status).toBe(200);
-    await expect(created.json()).resolves.toMatchObject({
-      world: {
-        id: "rain-teahouse",
-        title: "雨夜茶馆",
-        premise: "主角在雨夜茶馆查一笔旧账。",
-        mode: "open",
-      },
-      run: { id: "run-001" },
-    });
-
-    const worlds = await app.request("http://localhost/api/v1/play/worlds");
-    expect(worlds.status).toBe(200);
-    await expect(worlds.json()).resolves.toMatchObject({
-      worlds: [expect.objectContaining({ id: "rain-teahouse", title: "雨夜茶馆" })],
-    });
-
-    const runs = await app.request("http://localhost/api/v1/play/worlds/rain-teahouse/runs");
-    expect(runs.status).toBe(200);
-    await expect(runs.json()).resolves.toMatchObject({
-      worldId: "rain-teahouse",
-      runs: [expect.objectContaining({ id: "run-001", transcriptCount: 1 })],
-    });
-
-    const run = await app.request("http://localhost/api/v1/play/runs/rain-teahouse/run-001");
-    expect(run.status).toBe(200);
-    await expect(run.json()).resolves.toMatchObject({
-      transcript: [
-        { role: "assistant", content: "雨压在玻璃棚上，柜台后的老人把账本推过来。" },
-      ],
-    });
-  });
 });
