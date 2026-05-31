@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Gamepad2, X } from "lucide-react";
+import { Gamepad2, X, ChevronDown } from "lucide-react";
 import { fetchJson } from "../../hooks/use-api";
 
 // The HUD is genre-neutral: it renders whatever the world graph contains,
@@ -66,14 +66,27 @@ function formatValue(value: unknown): string {
   }
 }
 
+interface HudDetail {
+  readonly label?: string;
+  readonly text: string;
+}
+interface HudRow {
+  readonly id: string;
+  readonly glyph: string;
+  readonly label: string;
+  readonly value?: string;
+  readonly note?: string | null;
+  // Extra info shown when the row is expanded (summary, relationships, why a
+  // meter changed). A row is expandable only when this is non-empty.
+  readonly details: ReadonlyArray<HudDetail>;
+}
 interface HudView {
   readonly turn: number | null;
   readonly mode: string | null;
   readonly premise: string;
-  readonly locations: ReadonlyArray<PlayEntity>;
-  readonly actors: ReadonlyArray<{ entity: PlayEntity; relation: string | null }>;
-  readonly meters: ReadonlyArray<{ slot: PlayStateSlot; cause: string | null }>;
-  readonly holdings: ReadonlyArray<PlayEntity>;
+  readonly facing: ReadonlyArray<HudRow>;
+  readonly holdings: ReadonlyArray<HudRow>;
+  readonly meters: ReadonlyArray<HudRow>;
 }
 
 function buildView(run: PlayRunResponse | null): HudView | null {
@@ -83,36 +96,59 @@ function buildView(run: PlayRunResponse | null): HudView | null {
   const outcomeOf = new Map(events.map((e) => [e.id, e.outcomeSummary ?? ""]));
   const currentEdges = edges.filter((e) => e.validUntilEventId == null);
 
-  const locations = entities.filter((e) => e.type === "location");
-  const actors = entities.filter((e) => e.type === "actor").map((entity) => {
-    // Fold a single readable relationship into each actor line, resolving ids
-    // to labels so the HUD never shows raw ids.
-    const edge = currentEdges.find((e) => e.fromId === entity.id || e.toId === entity.id);
-    let relation: string | null = null;
-    if (edge) {
-      const other = edge.fromId === entity.id ? labelOf.get(edge.toId) : labelOf.get(edge.fromId);
-      const strength = typeof edge.strength === "number" ? ` ${edge.strength}` : "";
-      relation = `${edge.type}${strength}${other ? ` · ${other}` : ""}`;
-    } else if (entity.status) {
-      relation = entity.status;
-    }
-    return { entity, relation };
+  const summaryDetail = (e: PlayEntity): HudDetail[] =>
+    e.summary && e.summary.trim() ? [{ text: e.summary.trim() }] : [];
+  // All current relationships involving an entity, ids resolved to labels.
+  const relationDetails = (id: string): HudDetail[] =>
+    currentEdges
+      .filter((e) => e.fromId === id || e.toId === id)
+      .map((e) => {
+        const other = e.fromId === id ? labelOf.get(e.toId) : labelOf.get(e.fromId);
+        const strength = typeof e.strength === "number" ? ` ${e.strength}` : "";
+        return { label: "关系", text: `${e.type}${strength}${other ? ` · ${other}` : ""}` };
+      });
+
+  const locations: HudRow[] = entities
+    .filter((e) => e.type === "location")
+    .map((e) => ({ id: e.id, glyph: "📍", label: e.label, note: e.status ?? null, details: summaryDetail(e) }));
+  const actors: HudRow[] = entities
+    .filter((e) => e.type === "actor")
+    .map((e) => ({
+      id: e.id,
+      glyph: "👤",
+      label: e.label,
+      note: e.status ?? null,
+      details: [...summaryDetail(e), ...relationDetails(e.id)],
+    }));
+  const holdings: HudRow[] = entities
+    .filter((e) => HOLDING_TYPES.has(e.type))
+    .map((e) => ({
+      id: e.id,
+      glyph: HOLDING_GLYPH[e.type] ?? "•",
+      label: e.label,
+      note: e.status ?? null,
+      details: summaryDetail(e),
+    }));
+  const meters: HudRow[] = stateSlots.map((slot) => {
+    const cause = slot.updatedEventId ? outcomeOf.get(slot.updatedEventId) || "" : "";
+    return {
+      id: slot.id,
+      glyph: SLOT_GLYPH[slot.kind] ?? "•",
+      label: slot.label,
+      value: formatValue(slot.value),
+      note: null,
+      details: cause ? [{ label: "因为", text: cause }] : [],
+    };
   });
-  const meters = stateSlots.map((slot) => ({
-    slot,
-    cause: slot.updatedEventId ? (outcomeOf.get(slot.updatedEventId) || null) : null,
-  }));
-  const holdings = entities.filter((e) => HOLDING_TYPES.has(e.type));
 
   const turnFromEvents = events.reduce((max, e) => Math.max(max, e.turn), 0);
   return {
     turn: run.currentState?.turn ?? (events.length > 0 ? turnFromEvents : null),
     mode: run.currentState?.mode ?? null,
     premise: run.currentState?.premise ?? "",
-    locations,
-    actors,
-    meters,
+    facing: [...locations, ...actors],
     holdings,
+    meters,
   };
 }
 
@@ -196,14 +232,11 @@ export function PlayHud(props: {
           <>
             <Zone
               title={isZh ? "我面对的" : "Around me"}
-              empty={view.locations.length + view.actors.length === 0}
+              empty={view.facing.length === 0}
               emptyText={isZh ? "周围还没有出现地点或人物" : "No places or people around yet"}
             >
-              {view.locations.map((loc) => (
-                <Row key={loc.id} glyph="📍" label={loc.label} note={loc.status} />
-              ))}
-              {view.actors.map(({ entity, relation }) => (
-                <Row key={entity.id} glyph="👤" label={entity.label} note={relation} />
+              {view.facing.map((row) => (
+                <Row key={row.id} row={row} isZh={isZh} />
               ))}
             </Zone>
 
@@ -212,13 +245,8 @@ export function PlayHud(props: {
               empty={view.holdings.length === 0}
               emptyText={isZh ? "还没有获得物品、证据或线索" : "No items, evidence, or clues yet"}
             >
-              {view.holdings.map((item) => (
-                <Row
-                  key={item.id}
-                  glyph={HOLDING_GLYPH[item.type] ?? "•"}
-                  label={item.label}
-                  note={item.status}
-                />
+              {view.holdings.map((row) => (
+                <Row key={row.id} row={row} isZh={isZh} />
               ))}
             </Zone>
 
@@ -227,14 +255,8 @@ export function PlayHud(props: {
               empty={view.meters.length === 0}
               emptyText={isZh ? "还没有出现数值（压力、资源、关系、倒计时等）" : "No meters yet (pressure, resources, relations, timers…)"}
             >
-              {view.meters.map(({ slot, cause }) => (
-                <Row
-                  key={slot.id}
-                  glyph={SLOT_GLYPH[slot.kind] ?? "•"}
-                  label={slot.label}
-                  value={formatValue(slot.value)}
-                  note={cause}
-                />
+              {view.meters.map((row) => (
+                <Row key={row.id} row={row} isZh={isZh} />
               ))}
             </Zone>
 
@@ -270,20 +292,40 @@ function Zone(props: {
   );
 }
 
-function Row(props: {
-  readonly glyph: string;
-  readonly label: string;
-  readonly value?: string;
-  readonly note?: string | null;
-}) {
+function Row({ row, isZh }: { readonly row: HudRow; readonly isZh: boolean }) {
+  const [open, setOpen] = useState(false);
+  const expandable = row.details.length > 0;
   return (
-    <div className="rounded-lg border border-border/30 bg-secondary/30 px-2.5 py-1.5">
-      <div className="flex items-baseline gap-1.5">
-        <span className="shrink-0 text-xs">{props.glyph}</span>
-        <span className="text-[13px] font-medium text-foreground">{props.label}</span>
-        {props.value ? <span className="ml-auto text-[13px] font-semibold text-primary">{props.value}</span> : null}
+    <div className="rounded-lg border border-border/30 bg-secondary/30">
+      <div
+        role={expandable ? "button" : undefined}
+        title={expandable ? (open ? (isZh ? "收起" : "Collapse") : (isZh ? "展开详情" : "Show details")) : undefined}
+        onClick={expandable ? () => setOpen((o) => !o) : undefined}
+        className={`px-2.5 py-1.5 ${expandable ? "cursor-pointer" : ""}`}
+      >
+        <div className="flex items-baseline gap-1.5">
+          <span className="shrink-0 text-xs">{row.glyph}</span>
+          <span className="text-[13px] font-medium text-foreground">{row.label}</span>
+          {row.value ? <span className="ml-auto text-[13px] font-semibold text-primary">{row.value}</span> : null}
+          {expandable ? (
+            <ChevronDown
+              size={12}
+              className={`${row.value ? "ml-1.5" : "ml-auto"} shrink-0 text-muted-foreground/50 transition-transform ${open ? "rotate-180" : ""}`}
+            />
+          ) : null}
+        </div>
+        {row.note ? <div className="mt-0.5 pl-5 text-[11px] leading-4 text-muted-foreground">{row.note}</div> : null}
       </div>
-      {props.note ? <div className="mt-0.5 pl-5 text-[11px] leading-4 text-muted-foreground">{props.note}</div> : null}
+      {open && (
+        <div className="space-y-1 px-2.5 pb-2 pl-7">
+          {row.details.map((detail, i) => (
+            <p key={i} className="text-[11px] leading-5 text-muted-foreground">
+              {detail.label ? <span className="text-muted-foreground/50">{detail.label} </span> : null}
+              {detail.text}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
