@@ -544,7 +544,7 @@ ${overrides}\n`;
   }
 
   private buildMemoryGoal(chapterTitle: string | undefined, chapterContent: string): string {
-    return [chapterTitle ?? "", chapterContent.slice(0, 1500)]
+    return [chapterTitle ?? "", chapterContent]
       .filter((part) => part.trim().length > 0)
       .join("\n\n");
   }
