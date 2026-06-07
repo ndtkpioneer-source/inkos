@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ToolExecution } from "../../../store/chat/types";
-import { getGeneratedArtifactDetails, getPlayToolDetails, getProposedActionContractRows, getProposedActionDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
+import { getGeneratedArtifactDetails, getPlayEditDetails, getPlayToolDetails, getProposedActionContractRows, getProposedActionDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
 
 const makeExec = (overrides: Partial<ToolExecution> & { id: string; tool: string }): ToolExecution => ({
   label: "test",
@@ -93,16 +93,18 @@ describe("groupChronologically", () => {
     const execs: ToolExecution[] = [
       makeExec({ id: "1", tool: "read", label: "读取文件" }),
       makeExec({ id: "2", tool: "play_start", label: "启动互动世界" }),
-      makeExec({ id: "3", tool: "play_step", label: "推进互动世界" }),
-      makeExec({ id: "4", tool: "grep", label: "搜索" }),
+      makeExec({ id: "3", tool: "play_edit", label: "编辑互动世界" }),
+      makeExec({ id: "4", tool: "play_step", label: "推进互动世界" }),
+      makeExec({ id: "5", tool: "grep", label: "搜索" }),
     ];
 
     const groups = groupToolExecutionsChronologically(execs);
 
-    expect(groups).toHaveLength(4);
-    expect(groups.map((group) => group.type)).toEqual(["utilities", "pipeline", "pipeline", "utilities"]);
+    expect(groups).toHaveLength(5);
+    expect(groups.map((group) => group.type)).toEqual(["utilities", "pipeline", "pipeline", "pipeline", "utilities"]);
     expect(groups[1].type === "pipeline" ? groups[1].exec.tool : "").toBe("play_start");
-    expect(groups[2].type === "pipeline" ? groups[2].exec.tool : "").toBe("play_step");
+    expect(groups[2].type === "pipeline" ? groups[2].exec.tool : "").toBe("play_edit");
+    expect(groups[3].type === "pipeline" ? groups[3].exec.tool : "").toBe("play_step");
   });
 
   it("renders proposed actions as visible pipeline cards", () => {
@@ -178,6 +180,33 @@ describe("groupChronologically", () => {
       runId: "main",
       sceneText: "你翻开账本，发现一张旧船票。",
       suggestedActions: ["藏起船票", "追问来人"],
+    });
+  });
+
+  it("extracts play edit details", () => {
+    const exec = makeExec({
+      id: "play-edit-1",
+      tool: "play_edit",
+      label: "编辑互动世界",
+      details: {
+        kind: "play_world_updated",
+        worldId: "rain-flat",
+        runId: "main",
+        updatedWorldContract: true,
+        updatedVisualContract: true,
+        updatedPremise: false,
+        updatedEntities: 2,
+      },
+    });
+
+    expect(getPlayEditDetails(exec)).toMatchObject({
+      kind: "play_world_updated",
+      worldId: "rain-flat",
+      runId: "main",
+      updatedWorldContract: true,
+      updatedVisualContract: true,
+      updatedPremise: false,
+      updatedEntities: 2,
     });
   });
 

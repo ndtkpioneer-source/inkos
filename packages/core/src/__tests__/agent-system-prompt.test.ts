@@ -180,10 +180,15 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).not.toContain("architect");
     });
 
-    it("exposes play_step only after a world exists", () => {
+    it("exposes play_step and play_edit after a world exists", () => {
       const prompt = buildAgentSystemPrompt(null, "zh", "play", { playWorldExists: true });
       expect(prompt).toContain("InkOS Play 助手");
       expect(prompt).toContain("play_step");
+      expect(prompt).toContain("play_edit");
+      expect(prompt).toContain("世界契约");
+      expect(prompt).toContain("角色/物件/规则卡");
+      expect(prompt).toContain("不推进时间");
+      expect(prompt).toContain("用 play_edit，不要调用 play_step");
       expect(prompt).not.toContain("propose_action");
       expect(prompt).not.toContain("play_start：");
       expect(prompt).not.toContain("short_fiction_run");

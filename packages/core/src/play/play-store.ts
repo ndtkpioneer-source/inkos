@@ -70,6 +70,29 @@ export class PlayStore {
     return world;
   }
 
+  async updateWorld(worldId: string, patch: Partial<Pick<PlayWorld, "premise" | "worldContract" | "visualContract" | "mode">>): Promise<PlayWorld> {
+    const current = await this.loadWorld(worldId);
+    if (!current) {
+      throw new Error(`Play world not found: ${worldId}`);
+    }
+    const world = PlayWorldSchema.parse({
+      ...current,
+      ...patch,
+      id: current.id,
+      title: current.title,
+      language: current.language,
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.ensureWorld(world.id);
+    await writeFile(
+      join(this.worldDir(world.id), "world.json"),
+      `${JSON.stringify(world, null, 2)}\n`,
+      "utf-8",
+    );
+    return world;
+  }
+
   async loadWorld(worldId: string): Promise<PlayWorld | null> {
     try {
       const raw = await readFile(join(this.worldDir(worldId), "world.json"), "utf-8");

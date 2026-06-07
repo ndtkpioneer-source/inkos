@@ -689,7 +689,7 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(result.responseText).not.toContain("# 第2章");
   });
 
-  it("exposes play_step only after the play world exists for this session", async () => {
+  it("exposes play_edit and play_step after the play world exists for this session", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
     await new PlayStore(projectRoot).createWorld({
@@ -705,6 +705,7 @@ describe("runAgentSession cache — bookId switch", () => {
     );
 
     expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
+      "play_edit",
       "play_step",
     ]);
   });

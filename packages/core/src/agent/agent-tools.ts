@@ -1045,6 +1045,147 @@ export interface PlayStepToolOptions {
   }) => { step(input: string): Promise<PlayStepResult> };
 }
 
+const PlayEntityUpdateParam = Type.Object({
+  id: Type.Optional(Type.String({
+    description: "Existing entity id to update. Use actor_player for the player persona.",
+  })),
+  label: Type.Optional(Type.String({
+    description: "Existing entity label to update when id is unknown.",
+  })),
+  type: Type.Optional(Type.Union([
+    Type.Literal("actor"),
+    Type.Literal("location"),
+    Type.Literal("item"),
+    Type.Literal("evidence"),
+    Type.Literal("clue"),
+    Type.Literal("claim"),
+    Type.Literal("proof_chain"),
+    Type.Literal("organization"),
+    Type.Literal("rule"),
+    Type.Literal("scene"),
+    Type.Literal("event"),
+  ], { description: "Entity type when creating a missing entity. Usually actor for character/persona edits." })),
+  summary: Type.Optional(Type.String({
+    description: "Replacement or enriched entity summary, including goals/motives/persona when relevant.",
+  })),
+  status: Type.Optional(Type.String({
+    description: "Natural-language current status. Do not invent numeric meters unless the user asked for them.",
+  })),
+});
+
+type PlayEntityUpdateParamType = Static<typeof PlayEntityUpdateParam>;
+
+const PlayEditParams = Type.Object({
+  worldContract: Type.Optional(Type.String({
+    description: "Full updated world contract after applying the user's requested rule change. Use when the user edits world rules, time semantics, item semantics, role autonomy, taboos, or costs.",
+  })),
+  worldContractAppend: Type.Optional(Type.String({
+    description: "A narrow world-contract addition when you cannot safely rewrite the full contract. Prefer full worldContract when possible.",
+  })),
+  visualContract: Type.Optional(Type.String({
+    description: "Full updated visual contract after applying the user's requested image/visual-rule change.",
+  })),
+  visualContractAppend: Type.Optional(Type.String({
+    description: "A narrow visual-contract addition when you cannot safely rewrite the full contract. Prefer full visualContract when possible.",
+  })),
+  premise: Type.Optional(Type.String({
+    description: "Updated world premise only when the user explicitly changes premise/backstory. Do not rewrite premise for ordinary turns.",
+  })),
+  playerPersona: Type.Optional(Type.String({
+    description: "Updated player persona/identity/goals. This updates the reserved actor_player entity.",
+  })),
+  entityUpdates: Type.Optional(Type.Array(PlayEntityUpdateParam, {
+    description: "Character, object, place, or rule-card updates requested by the user. Use for role goals, status, motives, taboos, or known facts.",
+  })),
+  note: Type.Optional(Type.String({
+    description: "Short human-readable note summarizing what changed.",
+  })),
+});
+
+type PlayEditParamsType = Static<typeof PlayEditParams>;
+
+export function createPlayEditTool(
+  projectRoot: string,
+  sessionId: string,
+): AgentTool<typeof PlayEditParams> {
+  return {
+    name: "play_edit",
+    description:
+      "Persistently edit the active InkOS Play world card, visual contract, player persona, or entity/role cards without advancing time or narrating a turn. " +
+      "Use when the user says to change world rules, visual rules, character goals/persona/status, or long-lived play contracts.",
+    label: "Edit Play World",
+    parameters: PlayEditParams,
+    async execute(
+      _toolCallId: string,
+      params: PlayEditParamsType,
+    ): Promise<AgentToolResult<unknown>> {
+      const store = new PlayStore(projectRoot);
+      const worldId = safePlayId(sessionId, sessionId);
+      const runId = "main";
+      const world = await store.loadWorld(worldId);
+      if (!world) {
+        return textResult("还没有可编辑的互动世界。先用 play_start 开一局。");
+      }
+
+      const patch: Parameters<PlayStore["updateWorld"]>[1] = {};
+      const nextWorldContract = mergeContract(world.worldContract, params.worldContract, params.worldContractAppend);
+      const nextVisualContract = mergeContract(world.visualContract, params.visualContract, params.visualContractAppend);
+      if (nextWorldContract !== world.worldContract) patch.worldContract = nextWorldContract;
+      if (nextVisualContract !== world.visualContract) patch.visualContract = nextVisualContract;
+      const premise = params.premise?.trim();
+      if (premise && premise !== world.premise) patch.premise = premise;
+      const updatedWorld = Object.keys(patch).length > 0
+        ? await store.updateWorld(worldId, patch)
+        : world;
+
+      await store.ensureRun(worldId, runId);
+      const db = createPlayDB(store.runDir(worldId, runId));
+      let updatedEntities = 0;
+      try {
+        const playerPersona = params.playerPersona?.trim();
+        if (playerPersona) {
+          upsertPlayEditEntity(db, {
+            id: "actor_player",
+            type: "actor",
+            label: "玩家",
+            summary: playerPersona,
+            status: "已更新",
+          });
+          updatedEntities += 1;
+        }
+        for (const update of params.entityUpdates ?? []) {
+          if (upsertPlayEditEntity(db, update)) updatedEntities += 1;
+        }
+        const graph = db.snapshot();
+        const currentState = await store.loadCurrentState(worldId, runId).catch(() => ({}));
+        await store.saveCurrentState(worldId, runId, {
+          ...(currentState && typeof currentState === "object" ? currentState as Record<string, unknown> : {}),
+          worldContract: updatedWorld.worldContract,
+          visualContract: updatedWorld.visualContract,
+          premise: updatedWorld.premise,
+          graphEditedAt: new Date().toISOString(),
+        });
+        return textResult(
+          params.note?.trim() || "互动世界设定已更新。",
+          {
+            kind: "play_world_updated",
+            worldId,
+            runId,
+            world: updatedWorld,
+            updatedWorldContract: nextWorldContract !== world.worldContract,
+            updatedVisualContract: nextVisualContract !== world.visualContract,
+            updatedPremise: Boolean(patch.premise),
+            updatedEntities,
+            graph,
+          },
+        );
+      } finally {
+        closePlayDB(db);
+      }
+    },
+  };
+}
+
 export function createPlayStepTool(
   pipeline: PipelineRunner,
   projectRoot: string,
@@ -1135,6 +1276,55 @@ export function createPlayStepTool(
       );
     },
   };
+}
+
+function mergeContract(existing: string, replacement: string | undefined, addition: string | undefined): string {
+  const next = replacement?.trim();
+  if (next) return next;
+  const add = addition?.trim();
+  if (!add) return existing;
+  if (existing.includes(add)) return existing;
+  return existing.trim() ? `${existing.trim()}\n- ${add}` : add;
+}
+
+function upsertPlayEditEntity(db: PlayGraphDB, update: PlayEntityUpdateParamType): boolean {
+  const summary = update.summary?.trim();
+  const status = update.status?.trim();
+  const label = update.label?.trim();
+  const entityId = resolvePlayEditEntityId(db, update);
+  if (!entityId && !label) return false;
+  const existing = entityId ? db.getEntity(entityId) : null;
+  const id = entityId || playEditEntityId(update.type ?? "actor", label!);
+  db.upsertEntity({
+    id,
+    type: update.type ?? existing?.type ?? "actor",
+    label: label || existing?.label || id,
+    summary: summary ?? existing?.summary ?? "",
+    status: status ?? existing?.status ?? "",
+    createdEventId: existing?.createdEventId ?? "manual-edit",
+    updatedEventId: "manual-edit",
+  });
+  return true;
+}
+
+function resolvePlayEditEntityId(db: PlayGraphDB, update: PlayEntityUpdateParamType): string | undefined {
+  const id = update.id?.trim();
+  if (id) return id;
+  const label = update.label?.trim();
+  if (!label) return undefined;
+  const snapshot = db.snapshot();
+  const match = snapshot.entities.find((entity) => entity.label === label || entity.id === label);
+  return match?.id;
+}
+
+function playEditEntityId(type: string, label: string): string {
+  const ascii = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  return `${type}_${ascii || Date.now().toString(36)}`;
 }
 
 // ---------------------------------------------------------------------------

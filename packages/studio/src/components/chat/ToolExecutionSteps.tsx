@@ -110,6 +110,16 @@ export interface PlayToolDetails {
   readonly suggestedActions?: readonly string[];
 }
 
+export interface PlayEditDetails {
+  readonly kind: "play_world_updated";
+  readonly worldId?: string;
+  readonly runId?: string;
+  readonly updatedWorldContract?: boolean;
+  readonly updatedVisualContract?: boolean;
+  readonly updatedPremise?: boolean;
+  readonly updatedEntities?: number;
+}
+
 export interface ProposedActionDetails {
   readonly kind: "proposed_action";
   readonly execId: string;
@@ -131,6 +141,11 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function actionPayloadField(record: Record<string, unknown>): ChatActionPayload | undefined {
@@ -219,6 +234,22 @@ export function getPlayToolDetails(exec: ToolExecution): PlayToolDetails | null 
     runId: stringField(record, "runId"),
     sceneText: stringField(record, "sceneText"),
     suggestedActions: suggested,
+  };
+}
+
+export function getPlayEditDetails(exec: ToolExecution): PlayEditDetails | null {
+  if (exec.tool !== "play_edit") return null;
+  if (!exec.details || typeof exec.details !== "object") return null;
+  const record = exec.details as Record<string, unknown>;
+  if (record.kind !== "play_world_updated") return null;
+  return {
+    kind: "play_world_updated",
+    worldId: stringField(record, "worldId"),
+    runId: stringField(record, "runId"),
+    updatedWorldContract: booleanField(record, "updatedWorldContract"),
+    updatedVisualContract: booleanField(record, "updatedVisualContract"),
+    updatedPremise: booleanField(record, "updatedPremise"),
+    updatedEntities: numberField(record, "updatedEntities"),
   };
 }
 
@@ -355,8 +386,33 @@ function PlayResultPreview({ exec }: { exec: ToolExecution }) {
   );
 }
 
+function PlayEditPreview({ exec }: { exec: ToolExecution }) {
+  if (exec.tool !== "play_edit" || exec.status !== "completed") return null;
+  const details = getPlayEditDetails(exec);
+  if (!details) return null;
+  const changes = [
+    details.updatedWorldContract ? "世界契约" : "",
+    details.updatedVisualContract ? "视觉契约" : "",
+    details.updatedPremise ? "世界前提" : "",
+    details.updatedEntities && details.updatedEntities > 0 ? `${details.updatedEntities} 张卡片` : "",
+  ].filter(Boolean);
+  return (
+    <div className="mx-3 mb-3 mt-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+      <div className="text-xs font-semibold text-primary">互动世界设定已更新</div>
+      <div className="mt-1 text-xs leading-5 text-muted-foreground">
+        {changes.length > 0 ? changes.join(" · ") : "已写入当前世界。"}
+      </div>
+      {(details.worldId || details.runId) && (
+        <div className="mt-1 text-[11px] text-muted-foreground">
+          {details.worldId}{details.runId ? ` / ${details.runId}` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function isPipelineTool(tool: string): boolean {
-  return tool === "sub_agent" || tool === "context_compression" || tool === "propose_action" || tool === "short_fiction_run" || tool === "generate_cover" || tool === "play_start" || tool === "play_step";
+  return tool === "sub_agent" || tool === "context_compression" || tool === "propose_action" || tool === "short_fiction_run" || tool === "generate_cover" || tool === "play_edit" || tool === "play_start" || tool === "play_step";
 }
 
 // -- Live elapsed timer hook --
@@ -423,6 +479,7 @@ function PipelineExecution({
       />
       <ShortFictionResultPreview exec={exec} />
       <PlayResultPreview exec={exec} />
+      <PlayEditPreview exec={exec} />
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-1">
           {exec.stages && exec.stages.length > 0 && (

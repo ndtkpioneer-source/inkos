@@ -10,12 +10,15 @@ import {
   createSubAgentTool,
   createShortFictionRunTool,
   createPatchChapterTextTool,
+  createPlayEditTool,
   createPlayStartTool,
   createProposeActionTool,
   createRenameEntityTool,
   createWriteFileTool,
   createWriteTruthFileTool,
 } from "../agent/agent-tools.js";
+import { createPlayDB } from "../play/play-db-factory.js";
+import { PlayStore } from "../play/play-store.js";
 
 describe("agent deterministic writing tools", () => {
   let root: string;
@@ -843,5 +846,76 @@ describe("agent deterministic writing tools", () => {
     if (result.content[0]?.type === "text") {
       expect(result.content[0].text).toContain("Invalid truth file name");
     }
+  });
+
+  it("persists Play world, visual, player persona, and entity edits without advancing a turn", async () => {
+    const store = new PlayStore(root);
+    await store.createWorld({
+      id: "play-edit-session",
+      title: "雨夜合租屋",
+      premise: "我刚搬进合租屋。",
+      mode: "open",
+      worldContract: "时间按动作语义推进。",
+      visualContract: "雨夜冷光，不使用游戏 UI。",
+    });
+    await store.ensureRun("play-edit-session", "main");
+    await store.saveCurrentState("play-edit-session", "main", {
+      scene: "餐桌上有一只旧瓷杯。",
+    });
+    const seedDb = createPlayDB(store.runDir("play-edit-session", "main"));
+    seedDb.upsertEntity({
+      id: "actor_linqing",
+      type: "actor",
+      label: "室友林青",
+      summary: "旧目标",
+      status: "观望",
+    });
+    seedDb.close?.();
+
+    const tool = createPlayEditTool(root, "play-edit-session");
+    const result = await tool.execute("play-edit-1", {
+      worldContractAppend: "室友会自主行动，玩家等待时她也会推进自己的目标。",
+      visualContract: "物件情绪重量通过摆放距离、磨损、光线和人物反应体现。",
+      playerPersona: "我是刚搬进来的租客，想查清停电夜。",
+      entityUpdates: [{
+        label: "室友林青",
+        type: "actor",
+        summary: "隐瞒停电夜真相，目标是试探玩家是否可信。",
+        status: "戒备",
+      }],
+      note: "合租屋规则已更新。",
+    });
+
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.details).toMatchObject({
+      kind: "play_world_updated",
+      worldId: "play-edit-session",
+      runId: "main",
+      updatedWorldContract: true,
+      updatedVisualContract: true,
+      updatedEntities: 2,
+    });
+    const world = await store.loadWorld("play-edit-session");
+    expect(world?.worldContract).toContain("室友会自主行动");
+    expect(world?.visualContract).toContain("物件情绪重量");
+    const stateJson = JSON.parse(await readFile(join(root, "worlds", "play-edit-session", "runs", "main", "state", "current.json"), "utf-8"));
+    expect(stateJson.worldContract).toContain("室友会自主行动");
+    expect(stateJson.visualContract).toContain("物件情绪重量");
+    const db = createPlayDB(store.runDir("play-edit-session", "main"));
+    const snapshot = db.snapshot();
+    db.close?.();
+    expect(snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "actor_player",
+        label: "玩家",
+        summary: "我是刚搬进来的租客，想查清停电夜。",
+      }),
+      expect.objectContaining({
+        id: "actor_linqing",
+        label: "室友林青",
+        summary: "隐瞒停电夜真相，目标是试探玩家是否可信。",
+        status: "戒备",
+      }),
+    ]));
   });
 });

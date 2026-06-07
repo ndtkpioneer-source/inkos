@@ -249,11 +249,14 @@ describe("buildPartsFromEvents", () => {
       { type: "tool:end", id: "p1", result: "started" },
       { type: "tool:start", id: "p2", tool: "play_step" },
       { type: "tool:end", id: "p2", result: "advanced" },
+      { type: "tool:start", id: "p3", tool: "play_edit" },
+      { type: "tool:end", id: "p3", result: "updated" },
     ]);
 
-    expect(parts).toHaveLength(2);
+    expect(parts).toHaveLength(3);
     expect(parts[0].type === "tool" ? parts[0].execution.label : "").toBe("启动互动世界");
     expect(parts[1].type === "tool" ? parts[1].execution.label : "").toBe("推进互动世界");
+    expect(parts[2].type === "tool" ? parts[2].execution.label : "").toBe("编辑互动世界");
   });
 
   it("does not render model narration after a completed play tool as authoritative text", () => {

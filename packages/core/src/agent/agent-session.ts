@@ -26,6 +26,7 @@ import {
   createWriteTruthFileTool,
   createShortFictionRunTool,
   createGenerateCoverTool,
+  createPlayEditTool,
   createPlayStartTool,
   createPlayStepTool,
   createProposeActionTool,
@@ -647,7 +648,10 @@ function createAgentToolsForMode(params: {
       return [createPlayStartTool(params.pipeline, params.projectRoot, params.sessionId, params.playMode, { actionPayload: params.actionPayload })];
     }
     if (params.playWorldExists) {
-      return [createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId)];
+      return [
+        createPlayEditTool(params.projectRoot, params.sessionId),
+        createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId),
+      ];
     }
     return [proposalTool];
   }

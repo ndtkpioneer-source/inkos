@@ -40,6 +40,7 @@ const TOOL_LABELS: Record<string, string> = {
   propose_action: "确认动作",
   short_fiction_run: "短篇生产",
   generate_cover: "生成封面",
+  play_edit: "编辑互动世界",
   play_start: "启动互动世界",
   play_step: "推进互动世界",
 };
