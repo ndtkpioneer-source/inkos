@@ -3,6 +3,7 @@ import {
   clearBookCreateSessionId,
   filterModelGroups,
   getBookCreateSessionId,
+  getChatScrollBehavior,
   getProjectChatSessionId,
   pickModelSelection,
   pickProjectChatSessionId,
@@ -241,5 +242,15 @@ describe("isChatScrollNearBottom", () => {
 
   it("does not treat a user reading older messages as pinned to the bottom", () => {
     expect(isChatScrollNearBottom({ scrollTop: 500, clientHeight: 300, scrollHeight: 1200 })).toBe(false);
+  });
+});
+
+describe("getChatScrollBehavior", () => {
+  it("uses instant scroll while streaming to avoid stacked smooth-scroll animations", () => {
+    expect(getChatScrollBehavior(true)).toBe("auto");
+  });
+
+  it("keeps smooth scroll for non-streaming message jumps", () => {
+    expect(getChatScrollBehavior(false)).toBe("smooth");
   });
 });

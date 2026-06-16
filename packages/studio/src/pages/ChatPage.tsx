@@ -1,8 +1,9 @@
-import { useRef, useEffect, useMemo, useState } from "react";
+import { memo, useRef, useEffect, useMemo, useState } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { fetchJson } from "../hooks/use-api";
+import type { MessagePart } from "../store/chat/types";
 import { chatSelectors, useChatStore } from "../store/chat";
 import type { ChatSessionKind } from "../store/chat";
 import { useServiceStore } from "../store/service";
@@ -40,6 +41,7 @@ import {
 import {
   type ChatPageModelPreference,
   filterModelGroups,
+  getChatScrollBehavior,
   getBookCreateSessionId,
   getProjectChatSessionId,
   pickProjectChatSessionId,
@@ -90,6 +92,103 @@ interface CoverConfigResponse {
   readonly providers?: ReadonlyArray<{ readonly service: string; readonly connected?: boolean }>;
 }
 
+type ScrollFrameId = number | ReturnType<typeof setTimeout>;
+
+function requestScrollFrame(callback: () => void): ScrollFrameId {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    return globalThis.requestAnimationFrame(callback);
+  }
+  return globalThis.setTimeout(callback, 16);
+}
+
+function cancelScrollFrame(id: ScrollFrameId): void {
+  if (typeof id === "number" && typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(id);
+    return;
+  }
+  globalThis.clearTimeout(id);
+}
+
+type AssistantRenderItem =
+  | { kind: "thinking"; pi: number; part: Extract<MessagePart, { type: "thinking" }> }
+  | { kind: "text"; pi: number; part: Extract<MessagePart, { type: "text" }> }
+  | { kind: "tools"; parts: Array<Extract<MessagePart, { type: "tool" }>>; startIdx: number };
+
+function groupAssistantParts(parts: ReadonlyArray<MessagePart>): AssistantRenderItem[] {
+  const items: AssistantRenderItem[] = [];
+  for (let pi = 0; pi < parts.length; pi += 1) {
+    const part = parts[pi];
+    if (part.type === "thinking") {
+      items.push({ kind: "thinking", pi, part });
+    } else if (part.type === "text") {
+      items.push({ kind: "text", pi, part });
+    } else if (part.type === "tool") {
+      const last = items[items.length - 1];
+      if (last?.kind === "tools") {
+        last.parts.push(part);
+      } else {
+        items.push({ kind: "tools", parts: [part], startIdx: pi });
+      }
+    }
+  }
+  return items;
+}
+
+const AssistantMessageParts = memo(function AssistantMessageParts({
+  parts,
+  timestamp,
+  theme,
+  onProposedAction,
+  onRejectProposedAction,
+}: {
+  readonly parts: ReadonlyArray<MessagePart>;
+  readonly timestamp: number;
+  readonly theme: Theme;
+  readonly onProposedAction?: (details: ProposedActionDetails) => void;
+  readonly onRejectProposedAction?: (details: ProposedActionDetails) => void;
+}) {
+  const items = useMemo(() => groupAssistantParts(parts), [parts]);
+
+  return (
+    <>
+      {items.map((item) => {
+        if (item.kind === "thinking") {
+          return (
+            <div key={`t-${item.pi}`} className="mb-2">
+              <Reasoning isStreaming={item.part.streaming}>
+                <ReasoningTrigger />
+                <ReasoningContent>{item.part.content}</ReasoningContent>
+              </Reasoning>
+            </div>
+          );
+        }
+        if (item.kind === "tools") {
+          return (
+            <ToolExecutionSteps
+              key={`x-${item.startIdx}`}
+              executions={item.parts.map((part) => part.execution)}
+              onProposedAction={onProposedAction}
+              onRejectProposedAction={onRejectProposedAction}
+            />
+          );
+        }
+        if (item.kind === "text" && item.part.content) {
+          return (
+            <ChatMessage
+              key={`c-${item.pi}`}
+              role="assistant"
+              content={item.part.content}
+              timestamp={timestamp}
+              theme={theme}
+            />
+          );
+        }
+        return null;
+      })}
+    </>
+  );
+});
+
 // -- Component --
 
 export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-create", nav, theme, t, sse: _sse }: ChatPageProps) {
@@ -113,6 +212,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const setSessionPlayMode = useChatStore((s) => s.setSessionPlayMode);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<ScrollFrameId | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoScrollPinnedRef = useRef(true);
 
@@ -244,13 +344,32 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
-  // Auto-scroll only while the reader is already near the bottom. Play sessions
-  // update tool/image state frequently, so unconditional scrolling makes it
-  // impossible to read older turns.
+  // Auto-scroll only while the reader is already near the bottom. Streaming
+  // updates use instant scroll to avoid piling up smooth-scroll animations.
   useEffect(() => {
-    if (!scrollRef.current || !autoScrollPinnedRef.current) return;
-    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    if (!autoScrollPinnedRef.current) return undefined;
+
+    if (scrollFrameRef.current !== null) {
+      cancelScrollFrame(scrollFrameRef.current);
+    }
+
+    scrollFrameRef.current = requestScrollFrame(() => {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: getChatScrollBehavior(loading || isStreaming),
+      });
+      scrollFrameRef.current = null;
+    });
+
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelScrollFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [messages, loading, isStreaming]);
 
   useEffect(() => {
     autoScrollPinnedRef.current = true;
@@ -522,68 +641,13 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
                   <ChatMessage role="user" content={msg.content} timestamp={msg.timestamp} theme={theme} />
                 ) : msg.parts && msg.parts.length > 0 ? (
                   /* Assistant message — parts-based rendering (chronological) */
-                  /* Merge consecutive utility tool parts into one group */
-                  <>
-                    {(() => {
-                      type RenderItem =
-                        | { kind: "thinking"; pi: number; part: Extract<typeof msg.parts[0], { type: "thinking" }> }
-                        | { kind: "text"; pi: number; part: Extract<typeof msg.parts[0], { type: "text" }> }
-                        | { kind: "tools"; parts: Array<Extract<typeof msg.parts[0], { type: "tool" }>>; startIdx: number };
-
-                      const items: RenderItem[] = [];
-                      for (let pi = 0; pi < msg.parts!.length; pi++) {
-                        const part = msg.parts![pi];
-                        if (part.type === "thinking") {
-                          items.push({ kind: "thinking", pi, part });
-                        } else if (part.type === "text") {
-                          items.push({ kind: "text", pi, part });
-                        } else if (part.type === "tool") {
-                          // Merge consecutive tool parts into one group
-                          const last = items[items.length - 1];
-                          if (last?.kind === "tools") {
-                            last.parts.push(part);
-                          } else {
-                            items.push({ kind: "tools", parts: [part], startIdx: pi });
-                          }
-                        }
-                      }
-
-                      return items.map((item) => {
-                        if (item.kind === "thinking") {
-                          return (
-                            <div key={`t-${item.pi}`} className="mb-2">
-                              <Reasoning isStreaming={item.part.streaming}>
-                                <ReasoningTrigger />
-                                <ReasoningContent>{item.part.content}</ReasoningContent>
-                              </Reasoning>
-                            </div>
-                          );
-                        }
-                        if (item.kind === "tools") {
-                          return (
-                            <ToolExecutionSteps
-                              key={`x-${item.startIdx}`}
-                              executions={item.parts.map(p => p.execution)}
-                              onProposedAction={handleProposedAction}
-                              onRejectProposedAction={handleRejectProposedAction}
-                            />
-                          );
-                        }
-                        if (item.kind === "text" && item.part.content) {
-                          return (
-                            <ChatMessage
-                              key={`c-${item.pi}`}
-                              role="assistant"
-                              content={item.part.content}
-                              timestamp={msg.timestamp}
-                              theme={theme}
-                            />
-                          );
-                        }
-                        return null;
-                      });
-                    })()}
-                  </>
+                  <AssistantMessageParts
+                    parts={msg.parts}
+                    timestamp={msg.timestamp}
+                    theme={theme}
+                    onProposedAction={handleProposedAction}
+                    onRejectProposedAction={handleRejectProposedAction}
+                  />
                 ) : (
                   /* Assistant message — fallback (no parts, e.g. error messages) */
                   <ChatMessage

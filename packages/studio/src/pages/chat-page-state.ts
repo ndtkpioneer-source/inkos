@@ -140,3 +140,7 @@ export function isChatScrollNearBottom(input: {
   const distanceFromBottom = input.scrollHeight - input.scrollTop - input.clientHeight;
   return distanceFromBottom <= threshold;
 }
+
+export function getChatScrollBehavior(isStreaming: boolean): "auto" | "smooth" {
+  return isStreaming ? "auto" : "smooth";
+}

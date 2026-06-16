@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { memo, useMemo, useState, useEffect } from "react";
 import type { ChatActionPayload, ChatRequestedIntent, ChatSessionKind, ToolExecution, PipelineStage } from "../../store/chat/types";
 import {
   Collapsible,
@@ -701,7 +701,7 @@ export function groupToolExecutionsChronologically(executions: ToolExecution[]):
   return groups;
 }
 
-export function ToolExecutionSteps({ executions, onProposedAction, onRejectProposedAction }: ToolExecutionStepsProps) {
+export const ToolExecutionSteps = memo(function ToolExecutionSteps({ executions, onProposedAction, onRejectProposedAction }: ToolExecutionStepsProps) {
   const groups = useMemo(() => groupToolExecutionsChronologically(executions), [executions]);
 
   return (
@@ -720,4 +720,6 @@ export function ToolExecutionSteps({ executions, onProposedAction, onRejectPropo
       )}
     </div>
   );
-}
+});
+
+ToolExecutionSteps.displayName = "ToolExecutionSteps";

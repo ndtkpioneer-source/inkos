@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Theme } from "../../hooks/use-theme";
 import {
   Message,
@@ -13,7 +14,7 @@ export interface ChatMessageProps {
   readonly theme: Theme;
 }
 
-export function ChatMessage({
+export const ChatMessage = memo(function ChatMessage({
   role,
   content,
 }: ChatMessageProps) {
@@ -36,4 +37,6 @@ export function ChatMessage({
       </MessageContent>
     </Message>
   );
-}
+});
+
+ChatMessage.displayName = "ChatMessage";

@@ -39,6 +39,151 @@ interface AttachSessionStreamListenersInput {
   get: SliceGet;
 }
 
+export const STREAM_TEXT_FLUSH_MS = 48;
+export const TOOL_PROGRESS_FLUSH_MS = 750;
+export const MAX_TOOL_LOGS = 80;
+
+export type StreamTextDelta =
+  | { kind: "thinking"; text: string }
+  | { kind: "text"; text: string };
+
+interface StreamProgressEventData {
+  readonly status?: string;
+  readonly elapsedMs: number;
+  readonly totalChars: number;
+  readonly chineseChars: number;
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function applyStreamTextDeltas(
+  parts: ReadonlyArray<MessagePart>,
+  deltas: ReadonlyArray<StreamTextDelta>,
+): MessagePart[] {
+  const next = [...parts];
+
+  for (const delta of deltas) {
+    if (!delta.text) continue;
+
+    if (delta.kind === "thinking") {
+      const last = next[next.length - 1];
+      if (last?.type === "thinking") {
+        next[next.length - 1] = { ...last, content: last.content + delta.text };
+      }
+      continue;
+    }
+
+    const last = next[next.length - 1];
+    if (last?.type === "text") {
+      next[next.length - 1] = { ...last, content: last.content + delta.text };
+    } else {
+      next.push({ type: "text", content: delta.text });
+    }
+  }
+
+  return next;
+}
+
+export function appendBoundedToolLogs(
+  existing: ReadonlyArray<string> | undefined,
+  incoming: ReadonlyArray<string>,
+): string[] {
+  return [...(existing ?? []), ...incoming].slice(-MAX_TOOL_LOGS);
+}
+
+export function createStreamTextDeltaBatcher(
+  flushDeltas: (deltas: StreamTextDelta[]) => void,
+  delayMs = STREAM_TEXT_FLUSH_MS,
+): { enqueue: (delta: StreamTextDelta) => void; flush: () => void } {
+  let pending: StreamTextDelta[] = [];
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearTimer = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+  };
+
+  const flush = () => {
+    clearTimer();
+    if (pending.length === 0) return;
+    const deltas = pending;
+    pending = [];
+    flushDeltas(deltas);
+  };
+
+  const schedule = () => {
+    if (timer !== null) return;
+    timer = setTimeout(flush, delayMs);
+  };
+
+  return {
+    enqueue(delta) {
+      pending.push(delta);
+      schedule();
+    },
+    flush,
+  };
+}
+
+export function createLatestEventThrottle<T>(
+  publishLatest: (event: T) => void,
+  intervalMs = TOOL_PROGRESS_FLUSH_MS,
+): { enqueue: (event: T) => void; flush: () => void } {
+  let latest: T | undefined;
+  let hasLatest = false;
+  let lastPublishedAt: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearTimer = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+  };
+
+  const publishNow = (event: T) => {
+    lastPublishedAt = Date.now();
+    publishLatest(event);
+  };
+
+  const flush = () => {
+    clearTimer();
+    if (!hasLatest) return;
+    const event = latest as T;
+    latest = undefined;
+    hasLatest = false;
+    publishNow(event);
+  };
+
+  const schedule = () => {
+    if (timer !== null) return;
+    const elapsed = lastPublishedAt === null ? intervalMs : Date.now() - lastPublishedAt;
+    const delay = Math.max(0, intervalMs - elapsed);
+    timer = setTimeout(flush, delay);
+  };
+
+  return {
+    enqueue(event) {
+      if (lastPublishedAt === null) {
+        publishNow(event);
+        return;
+      }
+
+      latest = event;
+      hasLatest = true;
+
+      if (Date.now() - lastPublishedAt >= intervalMs) {
+        flush();
+      } else {
+        schedule();
+      }
+    },
+    flush,
+  };
+}
+
 export function attachSessionStreamListeners({
   sessionId,
   streamTs,
@@ -46,10 +191,62 @@ export function attachSessionStreamListeners({
   set,
   get,
 }: AttachSessionStreamListenersInput): void {
+  const textDeltaBatcher = createStreamTextDeltaBatcher((deltas) => {
+    set((state) => ({
+      sessions: updateSession(state.sessions, sessionId, (runtime) => {
+        const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
+        const parts = applyStreamTextDeltas(stream.parts ?? [], deltas);
+        const flat = deriveFlat(parts);
+        return { messages: replaceLast(messages, { ...stream, ...flat, parts }) };
+      }),
+    }));
+  });
+
+  const flushTextDeltas = () => textDeltaBatcher.flush();
+
+  const progressThrottle = createLatestEventThrottle<StreamProgressEventData>((data) => {
+    set((state) => ({
+      sessions: updateSession(state.sessions, sessionId, (runtime) => {
+        const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
+        const runningTool = findRunningToolPart([...(stream.parts ?? [])]);
+        if (!runningTool?.execution.stages) return {};
+        const parts = (stream.parts ?? []).map((part) => {
+          if (part.type !== "tool" || part.execution.id !== runningTool.execution.id) return part;
+          return {
+            type: "tool" as const,
+            execution: {
+              ...part.execution,
+              stages: part.execution.stages?.map((stage) =>
+                stage.status === "active"
+                  ? {
+                      ...stage,
+                      progress: {
+                        status: data.status,
+                        elapsedMs: data.elapsedMs,
+                        totalChars: data.totalChars,
+                        chineseChars: data.chineseChars,
+                      },
+                    }
+                  : stage,
+              ),
+            },
+          };
+        });
+        const flat = deriveFlat(parts);
+        return { messages: replaceLast(messages, { ...stream, ...flat, parts }) };
+      }),
+    }));
+  });
+
+  streamEs.addEventListener("draft:complete", flushTextDeltas);
+  streamEs.addEventListener("draft:error", flushTextDeltas);
+  streamEs.addEventListener("agent:complete", flushTextDeltas);
+
   streamEs.addEventListener("thinking:start", (event: MessageEvent) => {
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data)) return;
+      flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
@@ -67,18 +264,7 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data) || !data?.text) return;
-      set((state) => ({
-        sessions: updateSession(state.sessions, sessionId, (runtime) => {
-          const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
-          const parts = [...(stream.parts ?? [])];
-          const last = parts[parts.length - 1];
-          if (last?.type === "thinking") {
-            parts[parts.length - 1] = { ...last, content: last.content + data.text };
-          }
-          const flat = deriveFlat(parts);
-          return { messages: replaceLast(messages, { ...stream, ...flat, parts }) };
-        }),
-      }));
+      textDeltaBatcher.enqueue({ kind: "thinking", text: data.text as string });
     } catch {
       // ignore
     }
@@ -88,6 +274,7 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data)) return;
+      flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
@@ -109,20 +296,7 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data) || !data?.text) return;
-      set((state) => ({
-        sessions: updateSession(state.sessions, sessionId, (runtime) => {
-          const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
-          const parts = [...(stream.parts ?? [])];
-          const last = parts[parts.length - 1];
-          if (last?.type === "text") {
-            parts[parts.length - 1] = { ...last, content: last.content + data.text };
-          } else {
-            parts.push({ type: "text", content: data.text });
-          }
-          const flat = deriveFlat(parts);
-          return { messages: replaceLast(messages, { ...stream, ...flat, parts }) };
-        }),
-      }));
+      textDeltaBatcher.enqueue({ kind: "text", text: data.text as string });
     } catch {
       // ignore
     }
@@ -132,6 +306,7 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data) || !data?.tool) return;
+      flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
@@ -185,6 +360,8 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data) || !data?.tool) return;
+      flushTextDeltas();
+      progressThrottle.flush();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
@@ -223,6 +400,7 @@ export function attachSessionStreamListeners({
       if (!sessionMatchesEvent(sessionId, data)) return;
       const message = data?.message as string | undefined;
       if (!message) return;
+      flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
@@ -232,7 +410,7 @@ export function attachSessionStreamListeners({
             if (part.type !== "tool" || part.execution.id !== runningTool.execution.id) return part;
             return {
               type: "tool" as const,
-              execution: { ...part.execution, logs: [...(part.execution.logs ?? []), message] },
+              execution: { ...part.execution, logs: appendBoundedToolLogs(part.execution.logs, [message]) },
             };
           });
           const flat = deriveFlat(parts);
@@ -248,37 +426,13 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) : null;
       if (!sessionMatchesEvent(sessionId, data)) return;
-      set((state) => ({
-        sessions: updateSession(state.sessions, sessionId, (runtime) => {
-          const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
-          const runningTool = findRunningToolPart([...(stream.parts ?? [])]);
-          if (!runningTool?.execution.stages) return {};
-          const parts = (stream.parts ?? []).map((part) => {
-            if (part.type !== "tool" || part.execution.id !== runningTool.execution.id) return part;
-            return {
-              type: "tool" as const,
-              execution: {
-                ...part.execution,
-                stages: part.execution.stages?.map((stage) =>
-                  stage.status === "active"
-                    ? {
-                        ...stage,
-                        progress: {
-                          status: data.status,
-                          elapsedMs: data.elapsedMs,
-                          totalChars: data.totalChars,
-                          chineseChars: data.chineseChars,
-                        },
-                      }
-                    : stage,
-                ),
-              },
-            };
-          });
-          const flat = deriveFlat(parts);
-          return { messages: replaceLast(messages, { ...stream, ...flat, parts }) };
-        }),
-      }));
+      flushTextDeltas();
+      progressThrottle.enqueue({
+        status: typeof data.status === "string" ? data.status : undefined,
+        elapsedMs: numberOrZero(data.elapsedMs),
+        totalChars: numberOrZero(data.totalChars),
+        chineseChars: numberOrZero(data.chineseChars),
+      });
     } catch {
       // ignore
     }
