@@ -630,13 +630,11 @@ function PipelineExecution({
   exec,
   onProposedAction,
   onRejectProposedAction,
-  onOpenFilm,
   onOpenFilmStudio,
 }: {
   exec: ToolExecution;
   onProposedAction?: (details: ProposedActionDetails) => void;
   onRejectProposedAction?: (details: ProposedActionDetails) => void;
-  onOpenFilm?: (projectId: string) => void;
   onOpenFilmStudio?: (projectId: string) => void;
 }) {
   const isActive = exec.status === "running" || exec.status === "processing";
@@ -780,7 +778,6 @@ export interface ToolExecutionStepsProps {
   executions: ToolExecution[];
   onProposedAction?: (details: ProposedActionDetails) => void;
   onRejectProposedAction?: (details: ProposedActionDetails) => void;
-  onOpenFilm?: (projectId: string) => void;
   onOpenFilmStudio?: (projectId: string) => void;
 }
 
@@ -815,7 +812,7 @@ export function groupToolExecutionsChronologically(executions: ToolExecution[]):
   return groups;
 }
 
-export const ToolExecutionSteps = memo(function ToolExecutionSteps({ executions, onProposedAction, onRejectProposedAction, onOpenFilm, onOpenFilmStudio }: ToolExecutionStepsProps) {
+export const ToolExecutionSteps = memo(function ToolExecutionSteps({ executions, onProposedAction, onRejectProposedAction, onOpenFilmStudio }: ToolExecutionStepsProps) {
   const groups = useMemo(() => groupToolExecutionsChronologically(executions), [executions]);
 
   return (
@@ -828,7 +825,6 @@ export const ToolExecutionSteps = memo(function ToolExecutionSteps({ executions,
                 exec={g.exec}
                 onProposedAction={onProposedAction}
                 onRejectProposedAction={onRejectProposedAction}
-                onOpenFilm={onOpenFilm}
                 onOpenFilmStudio={onOpenFilmStudio}
               />
             )

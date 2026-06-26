@@ -690,7 +690,6 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
                               executions={item.parts.map(p => p.execution)}
                               onProposedAction={handleProposedAction}
                               onRejectProposedAction={handleRejectProposedAction}
-                              onOpenFilm={nav.toFilm}
                               onOpenFilmStudio={nav.toFilmStudio}
                             />
                           );

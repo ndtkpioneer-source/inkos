@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
+import { useNewSSEMessages } from "../hooks/use-sse";
 import { useColors } from "../hooks/use-colors";
 import { useApi } from "../hooks/use-api";
 import {
@@ -226,7 +227,7 @@ function ValidateView({
                       ? "text-red-500"
                       : issue.level === "warning"
                       ? "text-amber-500"
-                      : "text-slate-400"
+                      : "text-muted-foreground"
                   }
                 >
                   [{issue.level}]
@@ -257,10 +258,25 @@ export default function FilmWizard({
   const [subViews, setSubViews] = useState<Record<Phase, string>>({ ...DEFAULT_SUBVIEW });
   const [showPreview, setShowPreview] = useState(false);
 
-  const { data: graph } = useApi<StoryGraph>(`/projects/${projectId}/story-graph`);
-  const { data: validation } = useApi<ValidationReport>(
+  const { data: graph, refetch: refetchGraph } = useApi<StoryGraph>(`/projects/${projectId}/story-graph`);
+  const { data: validation, refetch: refetchValidation } = useApi<ValidationReport>(
     `/projects/${projectId}/story-graph/validation`,
   );
+
+  useEffect(() => {
+    void refetchGraph();
+    void refetchValidation();
+  }, [phase, refetchGraph, refetchValidation]);
+
+  const handleSseMessage = useCallback((msg: SSEMessage) => {
+    if (msg.event !== "agent:complete") return;
+    const data = msg.data as { activeBookId?: string } | null;
+    if (data?.activeBookId !== projectId) return;
+    void refetchGraph();
+    void refetchValidation();
+  }, [projectId, refetchGraph, refetchValidation]);
+
+  useNewSSEMessages(sse.messages, handleSseMessage);
 
   const progress = useMemo<Record<Phase, PhaseStatus>>(
     () => (graph ? computePhaseProgress(graph) : EMPTY_PROGRESS),
@@ -408,7 +424,7 @@ function MainArea({
 
   if (phase === "world" && subView === "chat") {
     return (
-      <div className="h-[calc(100vh-180px)] relative overflow-hidden">
+      <div className="h-full relative overflow-hidden">
         <ChatPage
           activeBookId={projectId}
           mode="interactive-film-authoring"
@@ -442,7 +458,7 @@ function MainArea({
 
   if (phase === "workshop" && subView === "chat") {
     return (
-      <div className="h-[calc(100vh-180px)] relative overflow-hidden">
+      <div className="h-full relative overflow-hidden">
         <ChatPage
           activeBookId={projectId}
           mode="interactive-film-authoring"

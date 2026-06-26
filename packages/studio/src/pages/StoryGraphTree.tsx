@@ -125,7 +125,7 @@ export function StoryGraphTree({
               {validation.issues.map((issue, i) => (
                 <li key={i} data-testid={`validation-issue-${issue.code}`} className="text-xs flex gap-2">
                   <span className={
-                    issue.level === "error" ? "text-red-500" : issue.level === "warning" ? "text-amber-500" : "text-slate-400"
+                    issue.level === "error" ? "text-red-500" : issue.level === "warning" ? "text-amber-500" : "text-muted-foreground"
                   }>[{issue.level}]</span>
                   <span>{issue.message}</span>
                 </li>
